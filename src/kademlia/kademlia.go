@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/rpc"
   "strconv"
+	"container/list"
+
 )
 
 const (
@@ -24,27 +26,15 @@ const (
 type Kademlia struct {
 	NodeID ID
   SelfContact Contact
-	Bucketsize int         //我新建了一个Bucketsize 属性
-	Other_Contacts []Contact	 //这是一个指向Contact数组的指针，即指向其他结点
+	Buckets []*list.List          // 每个Kademlia object 里面放置160 个桶
 }
-
-
-//定义 Kademlia 结构的一个方法
-func (route_table *Kademlia) Update(id ID) {
-		fmt.Println("good enough") //测试代码
-		route_table.FindContact(id)
-}
-
-
 
 //我们需要新建一个routing table， 根据现有的id， bucket size 以及 等等（待添加）
 func NewKademlia(laddr string) *Kademlia {
 	// TODO: Initialize other state here as you add functionality.
 	k := new(Kademlia)
 	k.NodeID = NewRandomID()
-	k.Bucketsize = bucketsize	//设定每个bucket大小为20
-
-
+  k.Buckets = make([]*list.List,160)
 	// Set up RPC server
 	// NOTE: KademliaCore is just a wrapper around Kademlia. This type includes
 	// the RPC functions.
@@ -69,8 +59,9 @@ func NewKademlia(laddr string) *Kademlia {
         }
     }
     k.SelfContact = Contact{k.NodeID, host, uint16(port_int)}
-		k.Other_Contacts = []Contact{}   // 初始化数组指针
-		k.Update(k.NodeID)	//测试代码
+		k.Update(&k.SelfContact)
+
+
 	return k
 }
 
@@ -86,16 +77,7 @@ func (e *NotFoundError) Error() string {
 func (k *Kademlia) FindContact(nodeId ID) (*Contact, error) {
 	// TODO: Search through contacts, find specified ID
 	// Find contact with provided ID
-		for i := 0; i<len(k.Other_Contacts); i++ {
-			//用for 循环查找 Other_Contacts 中，是否含有 特定的id值
-			if nodeId == k.Other_Contacts[i].NodeID {
-				return &k.Other_Contacts[i], nil
-			}
-		}
-    if nodeId == k.SelfContact.NodeID {
-				fmt.Println("Find myself") //测试代码
-        return &k.SelfContact, nil
-    }
+
 	return nil, &NotFoundError{nodeId, "Not found"}
 }
 
@@ -141,4 +123,28 @@ func (k *Kademlia) DoIterativeStore(key ID, value []byte) string {
 func (k *Kademlia) DoIterativeFindValue(key ID) string {
 	// For project 2!
 	return "ERR: Not implemented"
+}
+
+
+
+func (k *Kademlia) Update(contact *Contact) {
+	distance := k.NodeID.Xor(contact.NodeID)
+	index := 159 - distance.PrefixLen()
+	node := k.Buckets[index]
+	if node == nil {
+		node = list.New()
+		node.PushBack(contact)
+	} else {
+		for e := node.Front(); e != nil; e = e.Next() {
+			if e.Value.(Contact).NodeID == contact.NodeID {
+				node.MoveToBack(e)
+			} else if node.Len() < 20 {
+				node.PushBack(contact)
+			} else {
+				k.DoPing(node.Host, node.Port)
+			}
+		}
+	}
+	//fmt.Println(index)
+	return
 }
